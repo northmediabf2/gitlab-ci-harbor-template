@@ -1,0 +1,62 @@
+#Referência
+#https://medium.com/@aliartiza75/gitlab-integration-with-kubernetes-46c2473a4396
+#---------------------------------------------------------------------------------
+# Exemplos
+# https://docs.gitlab.com/ee/ci/examples/
+#--------------------------------------------
+#How to deploy Maven projects to Artifactory with GitLab CI/CD
+# https://docs.gitlab.com/ee/ci/examples/artifactory_and_gitlab/index.html
+#------------------------------------------------------------------------------
+stages:
+  - image
+  - deploy
+ 
+
+docker_build:
+  stage: image
+  image: docker:latest
+  variables:
+      DOCKER_HOST: "tcp://lordgaav__dind-options:2375"
+  services:
+      - lordgaav/dind-options:latest
+  before_script:
+      - echo "$HARBOR_PASS" | docker login -u "$HARBOR_USER" "$HARBOR_HOST" --password-stdin
+  tags:
+      - shell
+  script:
+      # - docker pull $HARBOR_REPO:$HARBOR_PORT_PULL/$KUBE_APP:latest || true
+      - docker build -t $APP:$CI_PIPELINE_ID --no-cache .
+      - docker tag $APP:$CI_PIPELINE_ID $HARBOR_HOST/$PROJECT/$APP:$CI_PIPELINE_ID
+      - docker tag $HARBOR_HOST/$PROJECT/$APP:$CI_PIPELINE_ID $HARBOR_HOST/$PROJECT/$APP:latest
+      - docker push $HARBOR_HOST/$PROJECT/$APP:$CI_PIPELINE_ID
+      - docker push $HARBOR_HOST/$PROJECT/$APP:latest
+
+  when: manual
+  except:
+    - master  
+ 
+kubernetes:
+  stage: deploy
+  tags:
+    - docker
+  image:
+    name: aliartiza75/kubectl:0.0.2
+    entrypoint: [""]
+  before_script:
+      - mkdir ~/.kube/
+      - echo $KUBE_CONFIG | base64 -d > config
+      - mv config ~/.kube/
+  script:
+    - kubectl -n $PROJECT apply -f ./k8s/configmaps
+    - kubectl -n $PROJECT apply -f ./k8s/secrets
+    # - kubectl -n $PROJECT apply -f ./k8s/volume
+    # - sed -i "s/latest/$CI_PIPELINE_ID/g" ./k8s/deployments/*.y*ml
+    - kubectl -n $PROJECT apply -f ./k8s/deployments
+    # - kubectl -n $KUBE_NAMESPACE set image deployment/$KUBE_APP api=$HARBOR_REPO:$HARBOR_PORT_PULL/$KUBE_APP:$CI_PIPELINE_ID
+    # - kubectl -n $PROJECT apply -f ./k8s/services 
+    - kubectl -n $PROJECT apply -f ./k8s/ingress-loadbalance
+  when: manual
+  except:
+    - master
+  # dependencies:
+  #   - docker_check 
